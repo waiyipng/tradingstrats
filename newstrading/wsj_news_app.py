@@ -74,6 +74,7 @@ def login_to_wsj(session: requests.Session, username: Optional[str] = None, pass
         )
 
     try:
+        # Prefer a Playwright-driven login when available (handles complex JS-driven flows).
         return login_to_wsj_playwright(username=username, password=password)
     except Exception:
         login_url = os.getenv("WSJ_LOGIN_URL", WSJ_LOGIN_URL)
