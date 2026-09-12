@@ -291,10 +291,10 @@ def aggregate_signal(articles: List[Dict[str, Any]], price_context: Optional[Dic
     avg_score = sum(item["sentiment_score"] for item in scored) / len(scored)
     pos_count = sum(1 for item in scored if item["sentiment"] == "positive")
     neg_count = sum(1 for item in scored if item["sentiment"] == "negative")
-    topic = max(
-        ((item["topic"], 1) for item in scored),
-        key=lambda pair: pair[1],
-    )[0]
+    # Pick the most common topic among scored articles
+    from collections import Counter as _Counter
+    topic_counts = _Counter(item['topic'] for item in scored)
+    topic = topic_counts.most_common(1)[0][0] if topic_counts else 'general'
 
     technical_adjustment = 0.0
     if price_context:
@@ -324,12 +324,12 @@ def aggregate_signal(articles: List[Dict[str, Any]], price_context: Optional[Dic
     }
 
 
-def paper_trade_signal(symbol: str, signal: Dict[str, Any], price_context: Optional[Dict[str, Any]] = None, cash: float = 100_000.0) -> Dict[str, Any]:
+def paper_trade_signal(symbol: str, signal: Dict[str, Any], price_context: Optional[Dict[str, Any]] = None, cash: float = 100_000.0, current_position_shares: int = 0) -> Dict[str, Any]:
     price = (price_context or {}).get("price")
     if price is None:
         price = 150.0
 
-    position_shares = 0
+    position_shares = current_position_shares
     initial_cash = cash
     trades: List[Dict[str, Any]] = []
 
@@ -342,12 +342,12 @@ def paper_trade_signal(symbol: str, signal: Dict[str, Any], price_context: Optio
         shares = int(allocation // price)
         if shares > 0:
             cash -= shares * price
-            position_shares = shares
+            position_shares += shares
             trades.append({"type": "BUY", "shares": shares, "price": price, "score": score})
     elif decision == "SELL" and position_shares > 0:
         cash += position_shares * price
         trades.append({"type": "SELL", "shares": position_shares, "price": price, "score": score})
-        position_shares = 0
+        position_shares = current_position_shares
 
     final_value = cash + (position_shares * price)
     pnl = final_value - initial_cash
