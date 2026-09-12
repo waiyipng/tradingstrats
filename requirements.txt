@@ -1,0 +1,4 @@
+ib_async
+requests
+beautifulsoup4
+playwright
