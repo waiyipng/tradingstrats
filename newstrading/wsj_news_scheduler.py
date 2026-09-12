@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import time
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -29,7 +30,13 @@ from wsj_news_app import (
 
 
 def run_once(symbol: str, query: Optional[str] = None, username: Optional[str] = None, password: Optional[str] = None, db_path: str = DEFAULT_DB_PATH) -> dict:
+    """Perform a single fetch/score cycle.
+
+    username/password are optional and will fall back to environment variables
+    inside login_to_wsj if omitted.
+    """
     session = build_session()
+    # Explicitly pass password; login_to_wsj will read from env if password is None.
     session = login_to_wsj(session, username=username, password=password)
     query_text = query or choose_query(symbol)
     links = fetch_wsj_search_results(session, query_text, max_links=5)
@@ -72,5 +79,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    import sys
     raise SystemExit(main())
