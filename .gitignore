@@ -15,6 +15,14 @@ venv/
 # Logs and databases
 *.log
 *.sqlite
+*.db
+
+# Secrets
+.env
+
+# Pipeline JSON artifacts (regenerated on every run)
+newstrading/data/
+wheeltrading/data/
 
 # Packages
 *.egg-info/
