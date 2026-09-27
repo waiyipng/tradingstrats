@@ -35,10 +35,10 @@ export default function App() {
   const [shown, setShown] = useState(10)
   const [eventPage, setEventPage] = useState(0)
   const [selectedWheel, setSelectedWheel] = useState<Wheel['symbols'][number] | null>(null)
-  const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768)
 
   useEffect(() => {
-    const handleResize = () => setIsMobile(window.innerWidth < 768)
+    const handleResize = () => setIsMobile(window.innerWidth <= 768)
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
   }, [])
