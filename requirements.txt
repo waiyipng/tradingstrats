@@ -1,4 +1,8 @@
 ib_async
 requests
+certifi
 beautifulsoup4
 playwright
+APScheduler
+pytz
+yfinance

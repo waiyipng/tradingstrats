@@ -1,0 +1,1 @@
+"""Paper-safe wheel strategy recommendations for GOOGL and VOO."""

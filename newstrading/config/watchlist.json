@@ -1,0 +1,103 @@
+[
+  {
+    "symbol": "GOOGL",
+    "name": "Alphabet",
+    "sector": "tech",
+    "aliases": ["google", "alphabet", "googl", "goog", "youtube", "android", "gemini"],
+    "sec_cik": 1652044
+  },
+  {
+    "symbol": "AAPL",
+    "name": "Apple",
+    "sector": "tech",
+    "aliases": ["apple", "aapl", "iphone", "ios", "mac", "app store"],
+    "sec_cik": 320193
+  },
+  {
+    "symbol": "META",
+    "name": "Meta",
+    "sector": "tech",
+    "aliases": ["meta", "facebook", "instagram", "whatsapp", "reality labs"],
+    "sec_cik": 1326801
+  },
+  {
+    "symbol": "AMZN",
+    "name": "Amazon",
+    "sector": "tech",
+    "aliases": ["amazon", "amzn", "aws", "prime"],
+    "sec_cik": 1018724
+  },
+  {
+    "symbol": "TSLA",
+    "name": "Tesla",
+    "sector": "tech",
+    "aliases": ["tesla", "tsla", "elon musk", "ev", "full self-driving"],
+    "sec_cik": 1318605
+  },
+  {
+    "symbol": "NVDA",
+    "name": "NVIDIA",
+    "sector": "tech",
+    "aliases": ["nvidia", "nvda", "gpu", "cuda", "data center chip"],
+    "sec_cik": 1045810
+  },
+  {
+    "symbol": "SNOW",
+    "name": "Snowflake",
+    "sector": "tech",
+    "aliases": ["snowflake", "data cloud"],
+    "sec_cik": 1640147
+  },
+  {
+    "symbol": "ORCL",
+    "name": "Oracle",
+    "sector": "tech",
+    "aliases": ["oracle", "orcl", "database", "oracle cloud"],
+    "sec_cik": 1341439
+  },
+  {
+    "symbol": "JPM",
+    "name": "JPMorgan Chase",
+    "sector": "financial",
+    "aliases": ["jpmorgan", "jp morgan", "chase", "jpm"],
+    "sec_cik": 19617
+  },
+  {
+    "symbol": "MS",
+    "name": "Morgan Stanley",
+    "sector": "financial",
+    "aliases": ["morgan stanley"],
+    "sec_cik": 895421
+  },
+  {
+    "symbol": "C",
+    "name": "Citigroup",
+    "sector": "financial",
+    "aliases": ["citigroup", "citi"],
+    "sec_cik": 831001
+  },
+  {
+    "symbol": "GS",
+    "name": "Goldman Sachs",
+    "sector": "financial",
+    "aliases": ["goldman sachs", "goldman"],
+    "sec_cik": 886982
+  },
+  {
+    "symbol": "BAC",
+    "name": "Bank of America",
+    "sector": "financial",
+    "aliases": ["bank of america", "bofa", "merrill lynch"],
+    "sec_cik": 70858
+  },
+  {
+    "symbol": "XRO",
+    "name": "Xero",
+    "sector": "tech",
+    "exchange": "ASX",
+    "currency": "AUD",
+    "market_data_symbol": "XRO.AX",
+    "marketaux_symbol": "XRO.AX",
+    "aliases": ["xero", "xro", "xero limited", "xero australia"]
+  }
+]
