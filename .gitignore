@@ -23,6 +23,7 @@ venv/
 # Pipeline JSON artifacts (regenerated on every run)
 newstrading/data/
 wheeltrading/data/
+goldtrading/data/
 
 # Packages
 *.egg-info/

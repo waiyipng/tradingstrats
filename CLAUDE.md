@@ -5,6 +5,7 @@
 - `newstrading/`: a news-driven equity strategy that collects company news, scores sentiment, produces BUY/SELL/HOLD signals, sizes orders, applies risk controls, and routes to a local simulator or Interactive Brokers.
 - `optiontrading/`: scripts and research for VOO options and wheel-style strategies.
 - `wheeltrading/`: an independent, automated IBKR paper-only wheel strategy for GOOGL and VOO.
+- `goldtrading/`: an independent, automated IBKR paper-only gold cash-and-carry and calendar-spread strategy.
 
 ## Newstrading pipeline
 
@@ -87,12 +88,24 @@ The dashboard refreshes artifacts periodically. Maintain it as an observability 
 
 The wheel scheduler runs every 30 minutes and may submit one-contract IBKR paper option orders only after quote/delta, duplicate-short-position, contract-qualification, bid, and cash-collateral checks pass. If option data is unavailable, it records `data_unavailable` and submits no order. Do not enable live option execution without explicit approval and an approval-gated design. Wheel status is read-only in the dashboard. Only lots explicitly registered as wheel put assignments are eligible to cover wheel calls; GOOGL or VOO shares owned by the equity-signal strategy or externally are displayed as `external` and must never trigger a wheel covered call. A registered assigned-put lot moves into `wheeltrading/data/wheel_state.json`'s `stock_pool` when its market price is at least 10% below the assignment strike. Pooled shares retain their assigned strike as average cost, are excluded from covered-call eligibility, and allow the active wheel to return to screening new cash-secured puts.
 
+## Gold trading
+
+`goldtrading/` is independent from `newstrading/` and `wheeltrading/`. It trades Micro Gold futures (MGC, COMEX) against IBKR's US Spot Gold product (`XAUUSD`, tradable from 1 oz) and, separately, MGC calendar spreads, only when the market price diverges from a computed carry-cost fair value by more than transaction costs plus a minimum edge:
+
+- Fair value: `spot * (1 + (financing rate + storage rate - convenience yield) * years to expiry)`. The financing and storage rates are static, manually-maintained assumptions (not a live feed) — see `goldtrading/STRATEGY.md` for the current values and the rationale.
+- Cash-and-carry only trades the long-spot/short-futures direction; the reverse would require shorting physical gold, which isn't supported for a retail account, so that direction is always a `HOLD`.
+- Calendar spreads trade the front vs. next active MGC month via a native combo order when possible, with a documented fallback and unwind path if one leg fails to fill after the other has.
+- Each trade requires a net edge (after estimated round-trip costs) of at least 0.15% of spot notional, caps notional/margin exposure at 20% of net liquidation, and allows only one open carry/spread position at a time.
+- Positions exit on a 70%-of-edge profit target, a 2x-of-edge stop-loss, or before a held near-month contract reaches its last trading day (MGC is physically settled).
+
+The gold scheduler runs every 30 minutes; `goldtrading/run_gold.py` is a manual, read-only CLI that never submits orders. Do not enable live execution without explicit approval and an approval-gated design. Gold status is read-only in the dashboard. See `goldtrading/STRATEGY.md` for the full strategy contract, worked examples, and risk-gate ordering.
+
 ## Development checks
 
 Use the configured interpreter for Python commands:
 
 ```bash
-/usr/local/bin/python3 -m compileall -q newstrading dashboard/server.py
+/usr/local/bin/python3 -m compileall -q newstrading goldtrading dashboard/server.py
 pnpm --dir dashboard build
 git diff --check
 ```
