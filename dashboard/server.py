@@ -21,6 +21,8 @@ WATCHLIST_PATH = ROOT / "newstrading" / "config" / "watchlist.json"
 AUDIT_DIR = DATA_DIR / "audit_runs"
 WHEEL_RUN_DIR = ROOT / "wheeltrading" / "data" / "automated_runs"
 WHEEL_LOG_PATH = ROOT / "wheeltrading" / "wheel_scheduler.log"
+GOLD_RUN_DIR = ROOT / "goldtrading" / "data" / "automated_runs"
+GOLD_LOG_PATH = ROOT / "goldtrading" / "gold_scheduler.log"
 EXECUTION_LOOKBACK_DAYS = 3
 
 
@@ -283,6 +285,24 @@ def wheel_status_payload() -> dict[str, Any]:
         return {"connection_mode": "unavailable", "status": "unavailable", "reason": str(exc), "ytd_realized_pnl": 0.0, "symbols": []}
 
 
+def gold_status_payload() -> dict[str, Any]:
+    try:
+        from goldtrading.status import gold_status
+
+        payload = gold_status()
+        latest_run = newest_json(GOLD_RUN_DIR) if GOLD_RUN_DIR.exists() else None
+        payload["latest_run"] = latest_run
+        latest_run_time = latest_run.get("generated_at") if latest_run else None
+        next_run = None
+        if latest_run_time:
+            next_run = (datetime.fromisoformat(latest_run_time.replace("Z", "+00:00")) + timedelta(minutes=30)).isoformat()
+        active = subprocess.run(["pgrep", "-f", "goldtrading.scheduler"], capture_output=True, text=True).returncode == 0
+        payload["scheduler"] = {"active": active, "interval_minutes": 30, "last_run_at": latest_run_time, "next_run": next_run}
+        return payload
+    except Exception as exc:
+        return {"connection_mode": "unavailable", "status": "unavailable", "reason": str(exc), "realized_pnl": 0.0, "open_positions": []}
+
+
 class DashboardHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlparse(self.path).path
@@ -298,6 +318,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return
         elif path == "/api/wheel-status":
             payload_data = wheel_status_payload()
+        elif path == "/api/gold-status":
+            payload_data = gold_status_payload()
         else:
             self.send_error(404)
             return
