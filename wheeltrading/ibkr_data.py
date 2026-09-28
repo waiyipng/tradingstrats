@@ -15,11 +15,35 @@ def _days_to_expiry(expiry: str) -> int:
     return max(0, (datetime.strptime(expiry, "%Y%m%d").date() - date.today()).days)
 
 
+def _open_short_option_positions(ib: IB) -> list:
+    return [position for position in ib.positions() if position.contract.secType == "OPT" and position.position < 0]
+
+
+def portfolio_put_collateral(ib: IB) -> float:
+    """Cash collateral already committed to open short puts across every wheel symbol."""
+    return sum(
+        float(position.contract.strike) * 100 * abs(int(position.position))
+        for position in _open_short_option_positions(ib)
+        if position.contract.right == "P"
+    )
+
+
+def symbol_open_contracts(ib: IB, symbol: str) -> int:
+    """Currently open short option contracts (puts or calls) for a single symbol."""
+    return sum(abs(int(position.position)) for position in _open_short_option_positions(ib) if position.contract.symbol == symbol)
+
+
 def account_state(ib: IB, symbol: str) -> AccountState:
     summary = {row.tag: row.value for row in ib.accountSummary()}
     qty = sum(int(position.position) for position in ib.positions() if position.contract.secType == "STK" and position.contract.symbol == symbol)
     cash = float(summary.get("TotalCashValue", 0.0))
-    return AccountState(cash=cash, net_liquidation=float(summary.get("NetLiquidation", cash)), stock_qty=qty)
+    return AccountState(
+        cash=cash,
+        net_liquidation=float(summary.get("NetLiquidation", cash)),
+        stock_qty=qty,
+        existing_put_collateral=portfolio_put_collateral(ib),
+        existing_symbol_contracts=symbol_open_contracts(ib, symbol),
+    )
 
 
 def _target_strike(strikes: set[float], spot: float, right: str, target_otm_pct: float) -> float | None:
@@ -89,6 +113,8 @@ def fetch_recommendation_inputs(symbol: str, min_days: int, max_days: int, targe
             # Only registered put-assignment lots are wheel inventory. Equity
             # signal positions and manual holdings are intentionally excluded.
             stock_qty=min(account.stock_qty, int(active_wheel["shares"])),
+            existing_put_collateral=account.existing_put_collateral,
+            existing_symbol_contracts=account.existing_symbol_contracts,
         )
         return wheel_account, option_quotes(ib, symbol, min_days, max_days, target_otm_pct)
     finally:

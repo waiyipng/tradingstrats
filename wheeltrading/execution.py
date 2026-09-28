@@ -6,6 +6,8 @@ from typing import Any
 
 from ib_async import IB, LimitOrder, Option
 
+from wheeltrading.config import PORTFOLIO_MAX_ALLOCATION_PCT, get_config
+from wheeltrading.ibkr_data import portfolio_put_collateral, symbol_open_contracts
 from wheeltrading.models import WheelRecommendation
 from wheeltrading.state import active_wheel_summary, load_state, track_open_option
 
@@ -28,17 +30,25 @@ def execute_paper(recommendation: WheelRecommendation, client_id: int = 45) -> d
         ib.sleep(0.25)
         if any(trade.contract.symbol == recommendation.symbol and trade.contract.secType == "OPT" and trade.orderStatus.status in ACTIVE_STATUSES for trade in ib.openTrades()):
             return {"status": "REJECTED", "reason": "existing active wheel option order"}
-        if any(position.contract.symbol == recommendation.symbol and position.contract.secType == "OPT" and position.position < 0 for position in ib.positions()):
-            return {"status": "REJECTED", "reason": "existing short wheel option position"}
+        max_contracts = get_config(recommendation.symbol).max_contracts_per_symbol
+        existing_contracts = symbol_open_contracts(ib, recommendation.symbol)
+        if existing_contracts + recommendation.contracts > max_contracts:
+            return {"status": "REJECTED", "reason": f"would exceed {max_contracts}-contract (200 share) per-symbol wheel limit"}
         quote = recommendation.contract
         contract = Option(quote.symbol, quote.expiry, quote.strike, quote.right, "SMART", multiplier="100", currency="USD")
         details = ib.reqContractDetails(contract)
         if not details:
             return {"status": "REJECTED", "reason": "option contract could not be qualified"}
         qualified = details[0].contract
-        cash = float({row.tag: row.value for row in ib.accountSummary()}.get("TotalCashValue", 0.0))
-        if recommendation.action == "SELL_CASH_SECURED_PUT" and recommendation.collateral_required > cash:
-            return {"status": "REJECTED", "reason": "cash collateral is insufficient"}
+        account_summary = {row.tag: row.value for row in ib.accountSummary()}
+        cash = float(account_summary.get("TotalCashValue", 0.0))
+        if recommendation.action == "SELL_CASH_SECURED_PUT":
+            if recommendation.collateral_required > cash:
+                return {"status": "REJECTED", "reason": "cash collateral is insufficient"}
+            net_liquidation = float(account_summary.get("NetLiquidation", cash))
+            existing_collateral = portfolio_put_collateral(ib)
+            if existing_collateral + recommendation.collateral_required > net_liquidation * PORTFOLIO_MAX_ALLOCATION_PCT:
+                return {"status": "REJECTED", "reason": f"would exceed {PORTFOLIO_MAX_ALLOCATION_PCT:.0%} portfolio collateral cap"}
         if recommendation.action == "SELL_COVERED_CALL":
             wheel_shares = int(active_wheel_summary(load_state(), recommendation.symbol)["shares"])
             broker_shares = sum(

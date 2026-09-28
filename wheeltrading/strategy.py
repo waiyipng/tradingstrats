@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from wheeltrading.config import WheelConfig
+from wheeltrading.config import PORTFOLIO_MAX_ALLOCATION_PCT, WheelConfig
 from wheeltrading.models import AccountState, OptionQuote, WheelRecommendation
 
 CONTRACT_MULTIPLIER = 100
@@ -32,14 +32,27 @@ def _annualized_yield(quote: OptionQuote) -> float:
 
 
 def recommend_wheel_action(config: WheelConfig, account: AccountState, quotes: Iterable[OptionQuote]) -> WheelRecommendation:
+    remaining_symbol_capacity = max(0, config.max_contracts_per_symbol - account.existing_symbol_contracts)
     if account.stock_qty >= CONTRACT_MULTIPLIER:
         action = "SELL_COVERED_CALL"
-        contracts = min(config.contracts_per_trade, account.stock_qty // CONTRACT_MULTIPLIER)
+        contracts = min(config.contracts_per_trade, account.stock_qty // CONTRACT_MULTIPLIER, remaining_symbol_capacity)
         candidates = _eligible_quotes(quotes, "C", config)
     else:
         action = "SELL_CASH_SECURED_PUT"
-        contracts = config.contracts_per_trade
+        contracts = min(config.contracts_per_trade, remaining_symbol_capacity)
         candidates = _eligible_quotes(quotes, "P", config)
+
+    if contracts <= 0:
+        return WheelRecommendation(
+            symbol=config.symbol,
+            action="HOLD",
+            contracts=0,
+            contract=None,
+            premium_credit=None,
+            collateral_required=0.0,
+            annualized_yield=None,
+            reasons=[f"{config.symbol} already holds the {config.max_contracts_per_symbol}-contract (200 share) per-symbol wheel limit"],
+        )
 
     candidates.sort(key=lambda quote: (_annualized_yield(quote), -(abs(quote.delta or 0))), reverse=True)
     for quote in candidates:
@@ -49,6 +62,8 @@ def recommend_wheel_action(config: WheelConfig, account: AccountState, quotes: I
             if collateral > account.cash:
                 continue
             if collateral > account.net_liquidation * config.max_allocation_pct:
+                continue
+            if account.existing_put_collateral + collateral > account.net_liquidation * PORTFOLIO_MAX_ALLOCATION_PCT:
                 continue
         if yield_rate < config.min_annualized_yield:
             continue

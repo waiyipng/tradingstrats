@@ -10,6 +10,12 @@ class AccountState:
     cash: float
     net_liquidation: float
     stock_qty: int
+    # Cash already committed as collateral to open wheel cash-secured puts
+    # across ALL symbols, used to enforce the portfolio-wide 30% cap.
+    existing_put_collateral: float = 0.0
+    # Count of currently open short wheel option contracts (puts or calls)
+    # for THIS symbol, used to enforce the 2-lot (200 share) per-symbol cap.
+    existing_symbol_contracts: int = 0
 
 
 @dataclass(frozen=True)
