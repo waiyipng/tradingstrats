@@ -25,7 +25,18 @@ class WheelConfig:
 PORTFOLIO_MAX_ALLOCATION_PCT = 0.30
 
 
-WHEEL_CONFIGS = {symbol: WheelConfig(symbol) for symbol in ("GOOGL", "VOO")}
+WHEEL_CONFIGS = {
+    "GOOGL": WheelConfig("GOOGL"),
+    # VOO is low-volatility: a 5% OTM put sits near 0.10 delta, below min_delta,
+    # so VOO targets strikes about 3% OTM instead.
+    "VOO": WheelConfig("VOO", target_otm_pct=0.03),
+}
+
+# Wheel orders are only submitted during regular US trading hours (Mon-Fri,
+# America/New_York). Outside this window delayed quotes are stale or missing.
+MARKET_TIMEZONE = "America/New_York"
+MARKET_OPEN = (9, 30)
+MARKET_CLOSE = (16, 0)
 
 
 def get_config(symbol: str) -> WheelConfig:

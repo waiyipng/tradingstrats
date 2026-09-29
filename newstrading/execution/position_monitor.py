@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from ib_async import IB, MarketOrder
 
 from newstrading.common import DATA_DIR, latest_artifact, load_json, new_id, save_json, utcnow_iso
+from newstrading.execution import pnl_ledger
 from newstrading.execution.brokers.ibkr_broker import ACTIVE_ORDER_STATUSES, _execution_status, _stock_contract
 from newstrading.models.execution import ExecutionReport, OrderFill, RiskCheckResult
 from newstrading.models.order_recommendation import OrderRecommendation
@@ -36,6 +37,8 @@ def track_entry(order: OrderRecommendation, report: ExecutionReport) -> None:
         "recommendation_id": order.recommendation_id,
         "broker_order_id": report.broker_order_id,
         "opened_at": report.timestamp,
+        "entry_price": report.order.avg_fill_price,
+        "entry_qty": report.order.filled_qty,
     }
     _save_state(state)
 
@@ -84,6 +87,9 @@ def monitor(live: bool = False, client_id: int = 22) -> List[ExecutionReport]:
     with connect(live=live, client_id=client_id) as ib:
         ib.reqOpenOrders()
         ib.sleep(0.25)
+        # Capture realized P&L from every strategy fill (bracket take-profit/stop-loss
+        # and monitor exits alike) before TWS drops it from the session.
+        pnl_ledger.sync_from_fills(ib.fills(), client_id)
         for symbol, entry in list(tracked_positions.items()):
             quantity = _position_qty(ib, symbol)
             if quantity <= 0:

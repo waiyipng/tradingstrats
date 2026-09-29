@@ -49,6 +49,26 @@ class MarketSnapshot:
 
 
 @dataclass(frozen=True)
+class CarryLadder:
+    """Full cost-of-carry breakdown for a single spot-to-futures time ladder."""
+
+    days_to_expiry: int
+    years_to_expiry: float
+    financing_rate_annual: float
+    storage_rate_annual: float
+    convenience_yield_annual: float
+    carry_rate_annual: float  # financing + storage - convenience yield
+    spot_price: float
+    carry_cost_amount: float  # theoretical_price - spot_price, in $/oz
+    theoretical_price: float
+    market_price: float
+    raw_mispricing: float  # market_price - theoretical_price
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
 class CarryRecommendation:
     action: Literal["CASH_AND_CARRY", "HOLD"]
     contracts: int
@@ -59,6 +79,11 @@ class CarryRecommendation:
     theoretical_futures_price: Optional[float]
     net_edge_after_costs: Optional[float]
     reasons: list[str]
+    ladder: Optional[CarryLadder] = None
+    round_trip_cost: Optional[float] = None
+    min_net_edge_threshold: Optional[float] = None
+    is_arbitrage_opportunity: bool = False
+    verdict: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -75,6 +100,12 @@ class CalendarRecommendation:
     mispricing: Optional[float]
     net_edge_after_costs: Optional[float]
     reasons: list[str]
+    near_ladder: Optional[CarryLadder] = None
+    far_ladder: Optional[CarryLadder] = None
+    round_trip_cost: Optional[float] = None
+    min_net_edge_threshold: Optional[float] = None
+    is_arbitrage_opportunity: bool = False
+    verdict: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

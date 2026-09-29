@@ -165,7 +165,7 @@ The active scheduler is configured for Interactive Brokers paper trading:
 BROKER = "ibkr"
 EXECUTE = True
 USE_LIVE_IBKR = False
-RUN_INTERVAL_MINUTES = 15
+RUN_INTERVAL_MINUTES = 30
 ```
 
 It runs each symbol in `config/watchlist.json`, staggering symbols by five seconds. With `USE_LIVE_IBKR = False`, orders route only to the IBKR paper account. Live IBKR use requires an explicit configuration change.

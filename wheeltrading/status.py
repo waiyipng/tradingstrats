@@ -7,6 +7,7 @@ from typing import Any
 from ib_async import IB, Stock
 
 from wheeltrading.config import WHEEL_CONFIGS
+from wheeltrading.ibkr_data import underlying_price
 from wheeltrading.state import active_wheel_summary, load_state, move_deep_assignment_to_pool, pool_summary
 
 PAPER_PORT = 7497
@@ -14,12 +15,9 @@ PAPER_PORT = 7497
 
 def _market_price(ib: IB, symbol: str) -> float | None:
     try:
-        ib.reqMarketDataType(3)  # Delayed data when real-time subscriptions are unavailable.
         contract = Stock(symbol, "SMART", "USD")
         ib.qualifyContracts(contract)
-        tickers = ib.run(ib.reqTickersAsync(contract), timeout=5)
-        price = tickers[0].marketPrice()
-        return float(price) if price and price == price else None
+        return underlying_price(ib, contract)
     except TimeoutError:
         return None
 
@@ -37,8 +35,7 @@ def wheel_status(client_id: int | None = None) -> dict[str, Any]:
             state = load_state()
             stock_positions = [position for position in positions if position.contract.symbol == symbol and position.contract.secType == "STK"]
             option_positions = [position for position in positions if position.contract.symbol == symbol and position.contract.secType == "OPT" and position.position]
-            stock_shares = sum(int(position.position) for position in stock_positions)
-            stock_cost = sum(float(position.position) * float(position.avgCost) for position in stock_positions if position.position > 0)
+            broker_stock_shares = sum(int(position.position) for position in stock_positions)
             open_options = [
                 {
                     "side": "SHORT" if position.position < 0 else "LONG",
@@ -53,16 +50,24 @@ def wheel_status(client_id: int | None = None) -> dict[str, Any]:
             ]
             pool = pool_summary(state, symbol)
             active_wheel = active_wheel_summary(state, symbol)
-            active_wheel_shares = min(stock_shares, int(active_wheel["shares"]))
+            active_wheel_shares = min(broker_stock_shares, int(active_wheel["shares"]))
+            pool_shares = int(pool["shares"])
+            # Only shares this strategy itself registered via a put assignment (still
+            # active, or moved to the pool) count as wheel-owned. Shares bought by the
+            # equity-signal strategy or manually outside any automated strategy are
+            # real broker holdings but are NOT wheel stock, and must not be reported
+            # as such (they also never counted toward covered-call eligibility).
+            wheel_shares = active_wheel_shares + pool_shares
+            wheel_cost = active_wheel_shares * float(active_wheel["average_cost"]) + pool_shares * float(pool["average_cost"])
             rows.append(
                 {
                     "symbol": symbol,
                     "market_price": price,
                     "open_options": open_options,
-                    "stock_shares": stock_shares,
-                    "stock_average_cost": round(stock_cost / stock_shares, 2) if stock_shares > 0 else 0.0,
+                    "stock_shares": wheel_shares,
+                    "stock_average_cost": round(wheel_cost / wheel_shares, 2) if wheel_shares > 0 else 0.0,
                     "active_wheel_shares": active_wheel_shares,
-                    "external_shares": max(0, stock_shares - active_wheel_shares - int(pool["shares"])),
+                    "external_shares": max(0, broker_stock_shares - wheel_shares),
                     "stock_pool": pool,
                     "tracked_options": [item for item in state.get("open_wheel_options", []) if item["symbol"] == symbol],
                 }

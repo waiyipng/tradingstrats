@@ -48,10 +48,19 @@ def record_open_position(position_type: str, action: str, legs: list[dict[str, A
 
 def close_position(position_id: str, realized_edge: float) -> None:
     state = load_state()
+    now = datetime.now(timezone.utc)
     for position in state.get("open_positions", []):
         if position["id"] == position_id and position["status"] == "open":
             position["status"] = "closed"
-            position["closed_at"] = datetime.now(timezone.utc).isoformat()
+            position["closed_at"] = now.isoformat()
             position["realized_edge"] = realized_edge
             state["realized_pnl"] = float(state.get("realized_pnl", 0.0)) + realized_edge
+            if state.get("pnl_year") != now.year:
+                state["pnl_year"] = now.year
+                state["ytd_realized_pnl"] = 0.0
+            state["ytd_realized_pnl"] = float(state.get("ytd_realized_pnl", 0.0)) + realized_edge
     save_state(state)
+
+
+def ytd_realized_pnl(state: dict[str, Any]) -> float:
+    return float(state.get("ytd_realized_pnl", 0.0)) if state.get("pnl_year") == datetime.now(timezone.utc).year else 0.0

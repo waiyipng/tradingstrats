@@ -4,6 +4,8 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal
 
+from goldtrading.models import CarryLadder
+
 
 def days_to_expiry(expiry: str) -> int:
     return max(0, (datetime.strptime(expiry, "%Y%m%d").date() - date.today()).days)
@@ -44,3 +46,30 @@ def theoretical_calendar_spread(
 def round_to_tick(price: float, min_tick: float) -> float:
     tick = Decimal(str(min_tick or 0.10))
     return float((Decimal(str(price)) / tick).quantize(Decimal("1"), rounding=ROUND_HALF_UP) * tick)
+
+
+def build_ladder(
+    spot: float,
+    market_price: float,
+    financing_rate_annual: float,
+    storage_rate_annual: float,
+    convenience_yield_annual: float,
+    expiry_days: int,
+) -> CarryLadder:
+    """Full cost-of-carry breakdown for one spot-to-futures time ladder (one contract month)."""
+    years = years_between(expiry_days)
+    carry_rate = financing_rate_annual + storage_rate_annual - convenience_yield_annual
+    theoretical_price = theoretical_futures_price(spot, financing_rate_annual, storage_rate_annual, convenience_yield_annual, expiry_days)
+    return CarryLadder(
+        days_to_expiry=expiry_days,
+        years_to_expiry=round(years, 4),
+        financing_rate_annual=financing_rate_annual,
+        storage_rate_annual=storage_rate_annual,
+        convenience_yield_annual=convenience_yield_annual,
+        carry_rate_annual=carry_rate,
+        spot_price=spot,
+        carry_cost_amount=round(theoretical_price - spot, 4),
+        theoretical_price=round(theoretical_price, 4),
+        market_price=market_price,
+        raw_mispricing=round(market_price - theoretical_price, 4),
+    )

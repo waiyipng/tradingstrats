@@ -6,12 +6,12 @@ import logging
 from pathlib import Path
 
 from apscheduler.schedulers.blocking import BlockingScheduler
-from apscheduler.triggers.interval import IntervalTrigger
 
 from newstrading.common import save_json, utcnow_iso
 from wheeltrading.config import WHEEL_CONFIGS, get_config
 from wheeltrading.execution import execute_paper
 from wheeltrading.ibkr_data import fetch_recommendation_inputs
+from wheeltrading.schedule import scan_trigger
 from wheeltrading.strategy import recommend_wheel_action
 
 RUN_INTERVAL_MINUTES = 30
@@ -39,9 +39,9 @@ def run_cycle() -> None:
 
 
 def main() -> None:
-    logger.info("Starting automated IBKR paper wheel scheduler every %d minutes", RUN_INTERVAL_MINUTES)
+    logger.info("Starting automated IBKR paper wheel scheduler every %d minutes, Mon-Fri 9:30am-4:00pm ET only", RUN_INTERVAL_MINUTES)
     scheduler = BlockingScheduler()
-    scheduler.add_job(run_cycle, IntervalTrigger(minutes=RUN_INTERVAL_MINUTES), id="wheel_cycle", max_instances=1, replace_existing=True)
+    scheduler.add_job(run_cycle, scan_trigger(), id="wheel_cycle", max_instances=1, replace_existing=True)
     scheduler.start()
 
 

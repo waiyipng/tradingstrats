@@ -67,7 +67,7 @@ def bracket_details(recommendation: dict[str, Any] | None) -> dict[str, float | 
     }
 
 
-def pending_stock_orders() -> list[dict[str, Any]]:
+def pending_stock_orders(watchlist_symbols: set[str]) -> list[dict[str, Any]]:
     try:
         from ib_async import IB
 
@@ -79,6 +79,11 @@ def pending_stock_orders() -> list[dict[str, Any]]:
             active = {"ApiPending", "PendingSubmit", "PreSubmitted", "Submitted"}
             events = []
             for trade in ib.openTrades():
+                # Only surface orders for symbols the equity-signal strategy actually
+                # tracks. Manually-placed orders (e.g. a VOO test position) are not
+                # strategy-driven and must not appear as strategy order events.
+                if trade.contract.symbol not in watchlist_symbols:
+                    continue
                 if trade.contract.secType != "STK" or trade.orderStatus.status not in active:
                     continue
                 events.append(
@@ -110,7 +115,7 @@ def parse_log_time(value: str) -> datetime:
 
 def scheduler_events() -> tuple[list[dict[str, str]], dict[str, Any]]:
     if not LOG_PATH.exists():
-        return [], {"active": False, "interval_minutes": 15}
+        return [], {"active": False, "interval_minutes": 30}
     events: list[dict[str, str]] = []
     pattern = re.compile(r"^(?P<time>[^,]+),\d+ INFO .* - (?P<message>.*)$")
     lines = LOG_PATH.read_text(encoding="utf-8").splitlines()
@@ -133,7 +138,7 @@ def scheduler_events() -> tuple[list[dict[str, str]], dict[str, Any]]:
     last_end = next((finished for finished in reversed(sweep_ends) if last_start and finished >= last_start), None)
     return list(reversed(events[-12:])), {
         "active": bool(startup),
-        "interval_minutes": 15,
+        "interval_minutes": 30,
         "started_at": startup,
         "last_sweep_started_at": last_start.isoformat() if last_start else None,
         "last_sweep_completed_at": last_end.isoformat() if last_end else None,
@@ -141,8 +146,16 @@ def scheduler_events() -> tuple[list[dict[str, str]], dict[str, Any]]:
     }
 
 
+def strategy_pnl() -> dict[str, Any]:
+    # Read-only view of the ledger the position monitor fills from IBKR executions.
+    from newstrading.execution.pnl_ledger import summary
+
+    return summary()
+
+
 def dashboard_payload() -> dict[str, Any]:
     watchlist = load_json(WATCHLIST_PATH)
+    watchlist_symbols = {entry["symbol"] for entry in watchlist}
     symbols: list[dict[str, Any]] = []
     all_news = 0
     buy_count = 0
@@ -183,7 +196,9 @@ def dashboard_payload() -> dict[str, Any]:
     cutoff = datetime.now(timezone.utc) - timedelta(days=EXECUTION_LOOKBACK_DAYS)
     reports_dir = DATA_DIR / "execution_reports"
     for directory in reports_dir.iterdir() if reports_dir.exists() else []:
-        if not directory.is_dir():
+        # Only strategy-tracked watchlist symbols; a directory can exist from
+        # manual/test activity (e.g. VOO) that the strategy never traded.
+        if not directory.is_dir() or directory.name not in watchlist_symbols:
             continue
         for path in directory.glob("*.json"):
             report = load_json(path)
@@ -206,7 +221,7 @@ def dashboard_payload() -> dict[str, Any]:
                     "bracket": bracket_details(recommendation),
                 }
             )
-    reports.extend(pending_stock_orders())
+    reports.extend(pending_stock_orders(watchlist_symbols))
     reports.sort(key=lambda report: iso_to_epoch(report["timestamp"]), reverse=True)
     events, scheduler = scheduler_events()
     now = datetime.now(timezone.utc)
@@ -224,6 +239,7 @@ def dashboard_payload() -> dict[str, Any]:
             next_poll += interval
     scheduler["next_poll"] = next_poll.isoformat() if next_poll else None
 
+    pnl = strategy_pnl()
     return {
         "generated_at": now.isoformat(),
         "scheduler": scheduler,
@@ -231,6 +247,8 @@ def dashboard_payload() -> dict[str, Any]:
         "symbols": sorted(symbols, key=lambda item: (item["decision"] != "BUY", -(item["confidence"] or 0), item["symbol"])),
         "executions": reports,
         "events": events,
+        "ytd_realized_pnl": pnl["ytd_realized_pnl"],
+        "realized_by_symbol": pnl["by_symbol"],
     }
 
 
@@ -275,9 +293,10 @@ def wheel_status_payload() -> dict[str, Any]:
             latest_runs[symbol] = run
         payload["latest_runs"] = latest_runs
         latest_run_time = max((run.get("generated_at") for run in latest_runs.values()), default=None)
-        next_run = None
-        if latest_run_time:
-            next_run = (datetime.fromisoformat(latest_run_time.replace("Z", "+00:00")) + timedelta(minutes=30)).isoformat()
+        from wheeltrading.schedule import next_scan_after
+
+        upcoming = next_scan_after(datetime.now(timezone.utc))
+        next_run = upcoming.isoformat() if upcoming else None
         active = subprocess.run(["pgrep", "-f", "wheeltrading.scheduler"], capture_output=True, text=True).returncode == 0
         payload["scheduler"] = {"active": active, "interval_minutes": 30, "last_run_at": latest_run_time, "next_run": next_run}
         return payload
@@ -300,7 +319,7 @@ def gold_status_payload() -> dict[str, Any]:
         payload["scheduler"] = {"active": active, "interval_minutes": 30, "last_run_at": latest_run_time, "next_run": next_run}
         return payload
     except Exception as exc:
-        return {"connection_mode": "unavailable", "status": "unavailable", "reason": str(exc), "realized_pnl": 0.0, "open_positions": []}
+        return {"connection_mode": "unavailable", "status": "unavailable", "reason": str(exc), "realized_pnl": 0.0, "ytd_realized_pnl": 0.0, "open_positions": []}
 
 
 class DashboardHandler(BaseHTTPRequestHandler):

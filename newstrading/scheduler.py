@@ -42,7 +42,7 @@ LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scheduler.l
 BROKER = "ibkr"        # "paper" or "ibkr"
 EXECUTE = True          # only used when BROKER == "ibkr"; gates live order submission
 USE_LIVE_IBKR = False  # only used when BROKER == "ibkr"
-RUN_INTERVAL_MINUTES = 15
+RUN_INTERVAL_MINUTES = 30
 SYMBOL_STAGGER_SECONDS = 5  # avoid bursting free-tier news APIs / IBKR pacing limits
 MAX_RETRIES = 3
 RETRY_BASE_SECONDS = 10

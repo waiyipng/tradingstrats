@@ -54,10 +54,8 @@ def _target_strike(strikes: set[float], spot: float, right: str, target_otm_pct:
     return min(candidates) if candidates else None
 
 
-def _snapshot_quote(ib: IB, contract: Option) -> OptionQuote:
-    ticker = ib.reqMktData(contract, snapshot=True)
-    ib.sleep(2)
-    delta = next(
+def _ticker_delta(ticker) -> float | None:
+    return next(
         (
             float(computation.delta)
             for computation in (ticker.modelGreeks, ticker.lastGreeks, ticker.bidGreeks, ticker.askGreeks)
@@ -65,6 +63,20 @@ def _snapshot_quote(ib: IB, contract: Option) -> OptionQuote:
         ),
         None,
     )
+
+
+def _snapshot_quote(ib: IB, contract: Option, max_wait_seconds: float = 10.0) -> OptionQuote:
+    # Delayed option data arrives over several seconds (bid/ask first, greeks later),
+    # so stream and wait for bid, ask, and delta rather than taking a fixed 2s snapshot.
+    ticker = ib.reqMktData(contract, "", False, False)
+    waited = 0.0
+    while waited < max_wait_seconds:
+        ib.sleep(0.5)
+        waited += 0.5
+        if ticker.bid and ticker.bid > 0 and ticker.ask and ticker.ask > 0 and _ticker_delta(ticker) is not None:
+            break
+    ib.cancelMktData(contract)
+    delta = _ticker_delta(ticker)
     return OptionQuote(
         symbol=contract.symbol,
         expiry=contract.lastTradeDateOrContractMonth,
@@ -77,16 +89,36 @@ def _snapshot_quote(ib: IB, contract: Option) -> OptionQuote:
     )
 
 
-def option_quotes(ib: IB, symbol: str, min_days: int, max_days: int, target_otm_pct: float = 0.05) -> list[OptionQuote]:
+def underlying_price(ib: IB, stock: Stock) -> float | None:
+    """Stock price from a delayed snapshot, falling back to the latest historical bar.
+
+    The paper account has no US stock market-data subscription, and delayed stock
+    snapshots come back empty (the request times out), while historical bars and
+    delayed option quotes still work.
+    """
     ib.reqMarketDataType(3)  # Delayed data when real-time subscriptions are unavailable.
+    try:
+        tickers = ib.run(ib.reqTickersAsync(stock), timeout=REQUEST_TIMEOUT_SECONDS)
+        price = tickers[0].marketPrice() if tickers else None
+        if price and price == price:
+            return float(price)
+    except TimeoutError:
+        pass
+    bars = ib.reqHistoricalData(stock, endDateTime="", durationStr="1 D", barSizeSetting="1 min", whatToShow="TRADES", useRTH=False)
+    return float(bars[-1].close) if bars and bars[-1].close > 0 else None
+
+
+def option_quotes(ib: IB, symbol: str, min_days: int, max_days: int, target_otm_pct: float = 0.05) -> list[OptionQuote]:
     stock = Stock(symbol, "SMART", "USD")
     ib.qualifyContracts(stock)
-    tickers = ib.run(ib.reqTickersAsync(stock), timeout=REQUEST_TIMEOUT_SECONDS)
-    underlying_price = tickers[0].marketPrice()
-    if not underlying_price or underlying_price != underlying_price:
+    spot = underlying_price(ib, stock)
+    if spot is None:
         return []
     chains = ib.run(ib.reqSecDefOptParamsAsync(symbol, "", "STK", stock.conId), timeout=REQUEST_TIMEOUT_SECONDS)
-    chain = next((item for item in chains if item.exchange == "SMART"), None)
+    # IBKR can return several SMART chains (e.g. an adjusted "2GOOGL" class with a
+    # single expiry); only the standard class carries the regular monthly ladder.
+    smart_chains = [item for item in chains if item.exchange == "SMART"]
+    chain = next((item for item in smart_chains if item.tradingClass == symbol), smart_chains[0] if smart_chains else None)
     if chain is None:
         return []
     expiration = next((expiry for expiry in sorted(chain.expirations) if min_days <= _days_to_expiry(expiry) <= max_days), None)
@@ -94,7 +126,7 @@ def option_quotes(ib: IB, symbol: str, min_days: int, max_days: int, target_otm_
         return []
     contracts = []
     for right in ("P", "C"):
-        strike = _target_strike(chain.strikes, underlying_price, right, target_otm_pct)
+        strike = _target_strike(chain.strikes, spot, right, target_otm_pct)
         if strike is not None:
             contracts.append(Option(symbol, expiration, strike, right, "SMART", multiplier=chain.multiplier, tradingClass=chain.tradingClass))
     qualified = ib.qualifyContracts(*contracts)

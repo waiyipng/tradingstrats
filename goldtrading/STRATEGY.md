@@ -119,9 +119,9 @@ of the following holds:
 
 ## Scheduler
 
-`goldtrading/scheduler.py` runs every 30 minutes (matching `wheeltrading`'s
-cadence, since carry mispricings are slow-moving relative to a 15-minute
-equity-news cycle): it first runs the exit-condition monitor, then
+`goldtrading/scheduler.py` runs every 30 minutes (matching the `wheeltrading`
+and `newstrading` cadence, since carry mispricings are slow-moving): it
+first runs the exit-condition monitor, then
 evaluates and — if a genuine, cost-adjusted opportunity is found — executes
 the cash-and-carry trade, then the calendar spread. `goldtrading/run_gold.py`
 is a manual, read-only CLI that only produces a recommendation JSON and

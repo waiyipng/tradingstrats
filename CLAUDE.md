@@ -40,7 +40,7 @@ Paid feeds are marked `unconfigured` until their API-key environment variable is
 BROKER = "ibkr"
 EXECUTE = True
 USE_LIVE_IBKR = False
-RUN_INTERVAL_MINUTES = 15
+RUN_INTERVAL_MINUTES = 30
 ```
 
 `USE_LIVE_IBKR = False` must remain false unless the user explicitly requests live trading. The scheduler requires a running, API-enabled IBKR TWS or Gateway connection on paper port `7497`.
@@ -50,6 +50,8 @@ Do not submit manual orders, alter active broker configuration, cancel orders, o
 ## Risk and exits
 
 IBKR BUY orders use a linked bracket: limit entry, `+6%` take-profit, and `-3%` stop-loss. Each actionable BUY requests a fixed 20 shares. The scheduler evaluates all symbols before execution, ranks eligible BUYs by confidence multiplied by evidence quality (`primary` 1.35, `professional` 1.15, `secondary` 1.00), and selects candidates within the remaining daily budget. The risk gate blocks duplicate buys, caps gross allocation at 50% of net liquidation, and caps each day's completed plus open BUY notional at 30% of net liquidation. The position monitor exits tracked strategy positions on a fresh `SELL` signal or after five days.
+
+Realized P&L is recorded in `newstrading/data/realized_pnl_ledger.json`: each position-monitor run copies closing stock fills placed by client id 22 (including bracket take-profit/stop-loss children) with IBKR's own realized P&L, keyed by execId, because TWS only exposes the current session's fills. Do not delete or rewrite ledger entries.
 
 The separate VOO order used for initial testing is not a strategy-managed position and must not be adopted, altered, or closed by strategy code.
 
@@ -83,10 +85,12 @@ The dashboard refreshes artifacts periodically. Maintain it as an observability 
 
 - With fewer than 100 active wheel shares, it screens cash-secured puts.
 - With at least 100 active wheel shares, it screens covered calls.
-- It targets 21-45 DTE, approximately 5% out-of-the-money strikes, 0.15-0.30 absolute delta, one contract, and an 8% minimum annualized premium yield.
+- It targets 21-45 DTE, approximately 5% out-of-the-money strikes (3% for low-volatility VOO), 0.15-0.30 absolute delta, one contract, and an 8% minimum annualized premium yield.
+- It holds at most 2 contracts (200 shares) per symbol and caps total open cash-secured put collateral at 30% of net liquidation across all wheel symbols.
+- Orders are only submitted during regular US trading hours (Mon-Fri 9:30am-4:00pm ET; exchange holidays are not modelled). Outside that window recommendations are still recorded but execution is `SKIPPED`.
 - It caps a cash-secured put's collateral at 10% of net liquidation.
 
-The wheel scheduler runs every 30 minutes and may submit one-contract IBKR paper option orders only after quote/delta, duplicate-short-position, contract-qualification, bid, and cash-collateral checks pass. If option data is unavailable, it records `data_unavailable` and submits no order. Do not enable live option execution without explicit approval and an approval-gated design. Wheel status is read-only in the dashboard. Only lots explicitly registered as wheel put assignments are eligible to cover wheel calls; GOOGL or VOO shares owned by the equity-signal strategy or externally are displayed as `external` and must never trigger a wheel covered call. A registered assigned-put lot moves into `wheeltrading/data/wheel_state.json`'s `stock_pool` when its market price is at least 10% below the assignment strike. Pooled shares retain their assigned strike as average cost, are excluded from covered-call eligibility, and allow the active wheel to return to screening new cash-secured puts.
+The wheel scheduler scans every 30 minutes during regular US trading hours only (Mon-Fri 9:30am-3:30pm ET slots, defined in `wheeltrading/schedule.py`) and may submit one-contract IBKR paper option orders only after quote/delta, duplicate-short-position, contract-qualification, bid, and cash-collateral checks pass. If option data is unavailable, it records `data_unavailable` and submits no order. Do not enable live option execution without explicit approval and an approval-gated design. Wheel status is read-only in the dashboard. Only lots explicitly registered as wheel put assignments are eligible to cover wheel calls; GOOGL or VOO shares owned by the equity-signal strategy or externally are displayed as `external` and must never trigger a wheel covered call. A registered assigned-put lot moves into `wheeltrading/data/wheel_state.json`'s `stock_pool` when its market price is at least 10% below the assignment strike. Pooled shares retain their assigned strike as average cost, are excluded from covered-call eligibility, and allow the active wheel to return to screening new cash-secured puts.
 
 ## Gold trading
 

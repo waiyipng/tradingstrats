@@ -8,7 +8,7 @@ from ib_async import IB
 
 from goldtrading.config import GOLD_CONFIG
 from goldtrading.ibkr_data import PAPER_PORT, account_state, futures_quotes, spot_quote
-from goldtrading.state import load_state
+from goldtrading.state import load_state, ytd_realized_pnl
 
 
 def gold_status(client_id: int | None = None) -> dict[str, Any]:
@@ -23,6 +23,7 @@ def gold_status(client_id: int | None = None) -> dict[str, Any]:
         return {
             "connection_mode": "paper",
             "realized_pnl": float(state.get("realized_pnl", 0.0)),
+            "ytd_realized_pnl": ytd_realized_pnl(state),
             "account": account.__dict__,
             "spot": spot.__dict__ if spot else None,
             "near_future": near.__dict__ if near else None,

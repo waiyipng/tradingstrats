@@ -1,12 +1,14 @@
 """Paper-only execution for wheel recommendations with duplicate and collateral checks."""
 from __future__ import annotations
 
+from datetime import datetime, time
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from ib_async import IB, LimitOrder, Option
 
-from wheeltrading.config import PORTFOLIO_MAX_ALLOCATION_PCT, get_config
+from wheeltrading.config import MARKET_CLOSE, MARKET_OPEN, MARKET_TIMEZONE, PORTFOLIO_MAX_ALLOCATION_PCT, get_config
 from wheeltrading.ibkr_data import portfolio_put_collateral, symbol_open_contracts
 from wheeltrading.models import WheelRecommendation
 from wheeltrading.state import active_wheel_summary, load_state, track_open_option
@@ -20,9 +22,17 @@ def _tick_price(price: float, min_tick: float) -> float:
     return float((Decimal(str(price)) / tick).quantize(Decimal("1"), rounding=ROUND_HALF_UP) * tick)
 
 
+def is_market_open(now: datetime | None = None) -> bool:
+    """Regular US session, Mon-Fri 9:30-16:00 ET. Exchange holidays are not modelled."""
+    local = (now or datetime.now(ZoneInfo(MARKET_TIMEZONE))).astimezone(ZoneInfo(MARKET_TIMEZONE))
+    return local.weekday() < 5 and time(*MARKET_OPEN) <= local.time() < time(*MARKET_CLOSE)
+
+
 def execute_paper(recommendation: WheelRecommendation, client_id: int = 45) -> dict[str, Any]:
     if recommendation.action == "HOLD" or recommendation.contract is None or recommendation.contracts <= 0:
         return {"status": "SKIPPED", "reason": "no actionable wheel recommendation"}
+    if not is_market_open():
+        return {"status": "SKIPPED", "reason": "outside regular market hours (9:30am-4:00pm ET, Mon-Fri)"}
     ib = IB()
     ib.connect("127.0.0.1", PAPER_PORT, clientId=client_id, timeout=10)
     try:
