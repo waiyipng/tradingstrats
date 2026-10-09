@@ -5,28 +5,32 @@ from typing import Any
 
 from ib_async import IB, ComboLeg, Contract, Future, LimitOrder
 
+from newstrading.common import usd_exchange_rate, usd_summary_value
 from goldtrading.carry import round_to_tick
 from goldtrading.config import GoldConfig
 from goldtrading.models import CalendarRecommendation, CarryRecommendation
 from goldtrading.state import load_state, open_position_count, record_open_position
 
 PAPER_PORT = 7497
+LIVE_PORT = 7496
 ACTIVE_STATUSES = {"ApiPending", "PendingSubmit", "PreSubmitted", "Submitted"}
 
 
 def _account_cash(ib: IB) -> float:
-    return float({row.tag: row.value for row in ib.accountSummary()}.get("TotalCashValue", 0.0))
+    return usd_summary_value(ib.accountSummary(), "TotalCashValue")
 
 
 def _margin_impact(ib: IB, contract: Contract, order) -> float:
     try:
         state = ib.whatIfOrder(contract, order)
-        return abs(float(state.initMarginChange))
+        # initMarginChange carries no currency of its own and is reported in the
+        # account's base currency, so convert to USD the same way account_cash is.
+        return abs(float(state.initMarginChange)) / usd_exchange_rate(ib.accountSummary())
     except (TypeError, ValueError, AttributeError):
         return float("inf")
 
 
-def execute_cash_and_carry(config: GoldConfig, recommendation: CarryRecommendation, client_id: int = 46) -> dict[str, Any]:
+def execute_cash_and_carry(config: GoldConfig, recommendation: CarryRecommendation, client_id: int = 46, live: bool = False) -> dict[str, Any]:
     if recommendation.action != "CASH_AND_CARRY" or recommendation.contracts <= 0 or recommendation.spot is None or recommendation.near_future is None:
         return {"status": "SKIPPED", "reason": "no actionable cash-and-carry recommendation"}
 
@@ -34,7 +38,7 @@ def execute_cash_and_carry(config: GoldConfig, recommendation: CarryRecommendati
         return {"status": "REJECTED", "reason": "max concurrent gold positions already open"}
 
     ib = IB()
-    ib.connect("127.0.0.1", PAPER_PORT, clientId=client_id, timeout=10)
+    ib.connect("127.0.0.1", LIVE_PORT if live else PAPER_PORT, clientId=client_id, timeout=10)
     try:
         spot_contract = Contract(secType="CMDTY", symbol=config.spot_symbol, exchange="SMART", currency="USD")
         spot_details = ib.reqContractDetails(spot_contract)
@@ -93,14 +97,14 @@ def execute_cash_and_carry(config: GoldConfig, recommendation: CarryRecommendati
             "status": "SUBMITTED",
             "spot_order_id": spot_trade.order.orderId,
             "futures_order_id": futures_trade.order.orderId,
-            "reason": "paper cash-and-carry orders submitted",
+            "reason": "live cash-and-carry orders submitted" if live else "paper cash-and-carry orders submitted",
         }
     finally:
         if ib.isConnected():
             ib.disconnect()
 
 
-def execute_calendar_spread(config: GoldConfig, recommendation: CalendarRecommendation, client_id: int = 46) -> dict[str, Any]:
+def execute_calendar_spread(config: GoldConfig, recommendation: CalendarRecommendation, client_id: int = 46, live: bool = False) -> dict[str, Any]:
     if recommendation.action not in ("SELL_CALENDAR_SPREAD", "BUY_CALENDAR_SPREAD") or recommendation.contracts <= 0 or recommendation.near_future is None or recommendation.far_future is None:
         return {"status": "SKIPPED", "reason": "no actionable calendar-spread recommendation"}
 
@@ -108,7 +112,7 @@ def execute_calendar_spread(config: GoldConfig, recommendation: CalendarRecommen
         return {"status": "REJECTED", "reason": "max concurrent gold positions already open"}
 
     ib = IB()
-    ib.connect("127.0.0.1", PAPER_PORT, clientId=client_id, timeout=10)
+    ib.connect("127.0.0.1", LIVE_PORT if live else PAPER_PORT, clientId=client_id, timeout=10)
     try:
         near_details = ib.reqContractDetails(Future(symbol=config.futures_symbol, exchange=config.futures_exchange, currency="USD", lastTradeDateOrContractMonth=recommendation.near_future.expiry))
         far_details = ib.reqContractDetails(Future(symbol=config.futures_symbol, exchange=config.futures_exchange, currency="USD", lastTradeDateOrContractMonth=recommendation.far_future.expiry))
@@ -165,7 +169,7 @@ def execute_calendar_spread(config: GoldConfig, recommendation: CalendarRecommen
                 entry_mispricing_magnitude=abs(recommendation.mispricing or 0.0),
                 entry_net_edge=recommendation.net_edge_after_costs or 0.0,
             )
-            return {"status": status, "order_id": trade.order.orderId, "limit_price": limit_price, "reason": "paper calendar spread combo order submitted"}
+            return {"status": status, "order_id": trade.order.orderId, "limit_price": limit_price, "reason": "live calendar spread combo order submitted" if live else "paper calendar spread combo order submitted"}
 
         # The combo was rejected outright (e.g. spreads unsupported for this contract) — fall back
         # to two sequential single-leg orders, near leg first.
@@ -194,7 +198,7 @@ def execute_calendar_spread(config: GoldConfig, recommendation: CalendarRecommen
             "status": "SUBMITTED",
             "near_order_id": near_trade.order.orderId,
             "far_order_id": far_trade.order.orderId,
-            "reason": "paper calendar spread legs submitted sequentially after the combo order was rejected",
+            "reason": "live calendar spread legs submitted sequentially after the combo order was rejected" if live else "paper calendar spread legs submitted sequentially after the combo order was rejected",
         }
     finally:
         if ib.isConnected():

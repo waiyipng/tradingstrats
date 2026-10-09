@@ -1,19 +1,29 @@
-"""Create paper-safe wheel strategy recommendations; never submits options orders."""
+"""Create wheel strategy recommendations against IBKR paper or live; never submits options orders."""
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 from newstrading.common import save_json, utcnow_iso
+from trading_config import get_strategy_config
 from wheeltrading.config import WHEEL_CONFIGS, get_config
 from wheeltrading.ibkr_data import fetch_recommendation_inputs
 from wheeltrading.strategy import recommend_wheel_action
 
 OUTPUT_DIR = Path(__file__).resolve().parent / "data" / "recommendations"
 
+# Same double gate as the scheduler: trading_config.json mode="live" AND this env var.
+LIVE_CONFIRM_ENV = "WHEELTRADING_LIVE_CONFIRM"
+
+
+def _use_live() -> bool:
+    cfg = get_strategy_config("wheeltrading")
+    return cfg["mode"] == "live" and os.environ.get(LIVE_CONFIRM_ENV) == "1"
+
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Generate read-only IBKR paper wheel recommendations.")
+    parser = argparse.ArgumentParser(description="Generate read-only IBKR wheel recommendations (paper, or live if trading_config.json and WHEELTRADING_LIVE_CONFIRM both enable it).")
     parser.add_argument("--symbol", choices=sorted(WHEEL_CONFIGS))
     parser.add_argument("--all", action="store_true", help="Evaluate GOOGL and VOO.")
     parser.add_argument("--client-id", type=int, default=41)
@@ -21,6 +31,7 @@ def main() -> int:
     if not args.symbol and not args.all:
         parser.error("Provide --symbol or --all")
 
+    live = _use_live()
     symbols = [args.symbol] if args.symbol else sorted(WHEEL_CONFIGS)
     for symbol in symbols:
         config = get_config(symbol)
@@ -31,12 +42,15 @@ def main() -> int:
                 config.max_days_to_expiry,
                 config.target_otm_pct,
                 args.client_id,
+                live=live,
             )
             recommendation = recommend_wheel_action(config, account, quotes)
-            payload = {"generated_at": utcnow_iso(), "mode": "recommendation_only", "account": account.__dict__, "quotes_considered": len(quotes), "recommendation": recommendation.to_dict()}
+            mode = "live_recommendation_only" if live else "recommendation_only"
+            payload = {"generated_at": utcnow_iso(), "mode": mode, "account": account.__dict__, "quotes_considered": len(quotes), "recommendation": recommendation.to_dict()}
         except (TimeoutError, RuntimeError) as exc:
             reason = str(exc) or "IBKR option-chain market-data request timed out"
-            payload = {"generated_at": utcnow_iso(), "mode": "recommendation_only", "status": "data_unavailable", "symbol": symbol, "reason": reason}
+            mode = "live_recommendation_only" if live else "recommendation_only"
+            payload = {"generated_at": utcnow_iso(), "mode": mode, "status": "data_unavailable", "symbol": symbol, "reason": reason}
         output = OUTPUT_DIR / f"wheel_{symbol}_{utcnow_iso().replace(':', '').replace('+00:00', 'Z')}.json"
         save_json(output, payload)
         print(f"{symbol}: {payload.get('recommendation', {}).get('action', payload.get('status'))} -> {output}")

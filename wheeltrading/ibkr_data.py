@@ -4,10 +4,12 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from ib_async import IB, Option, Stock
 
+from newstrading.common import usd_summary_value
 from wheeltrading.models import AccountState, OptionQuote
 from wheeltrading.state import active_wheel_summary, load_state
 
 PAPER_PORT = 7497
+LIVE_PORT = 7496
 REQUEST_TIMEOUT_SECONDS = 8
 
 
@@ -34,12 +36,12 @@ def symbol_open_contracts(ib: IB, symbol: str) -> int:
 
 
 def account_state(ib: IB, symbol: str) -> AccountState:
-    summary = {row.tag: row.value for row in ib.accountSummary()}
+    rows = ib.accountSummary()
     qty = sum(int(position.position) for position in ib.positions() if position.contract.secType == "STK" and position.contract.symbol == symbol)
-    cash = float(summary.get("TotalCashValue", 0.0))
+    cash = usd_summary_value(rows, "TotalCashValue")
     return AccountState(
         cash=cash,
-        net_liquidation=float(summary.get("NetLiquidation", cash)),
+        net_liquidation=usd_summary_value(rows, "NetLiquidation", cash),
         stock_qty=qty,
         existing_put_collateral=portfolio_put_collateral(ib),
         existing_symbol_contracts=symbol_open_contracts(ib, symbol),
@@ -130,12 +132,14 @@ def option_quotes(ib: IB, symbol: str, min_days: int, max_days: int, target_otm_
         if strike is not None:
             contracts.append(Option(symbol, expiration, strike, right, "SMART", multiplier=chain.multiplier, tradingClass=chain.tradingClass))
     qualified = ib.qualifyContracts(*contracts)
-    return [_snapshot_quote(ib, contract) for contract in qualified]
+    # qualifyContracts leaves unresolved entries as None (e.g. a strike that isn't
+    # actually listed for this expiry, or chain data IBKR can't resolve after hours).
+    return [_snapshot_quote(ib, contract) for contract in qualified if contract is not None and contract.conId]
 
 
-def fetch_recommendation_inputs(symbol: str, min_days: int, max_days: int, target_otm_pct: float = 0.05, client_id: int = 41) -> tuple[AccountState, list[OptionQuote]]:
+def fetch_recommendation_inputs(symbol: str, min_days: int, max_days: int, target_otm_pct: float = 0.05, client_id: int = 41, live: bool = False) -> tuple[AccountState, list[OptionQuote]]:
     ib = IB()
-    ib.connect("127.0.0.1", PAPER_PORT, clientId=client_id)
+    ib.connect("127.0.0.1", LIVE_PORT if live else PAPER_PORT, clientId=client_id)
     try:
         account = account_state(ib, symbol)
         active_wheel = active_wheel_summary(load_state(), symbol)

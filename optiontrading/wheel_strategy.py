@@ -25,6 +25,8 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from ib_async import IB, LimitOrder, Option, Stock
 
+from newstrading.common import usd_summary_value
+
 
 TICKER = "VOO"
 CONTRACT_SIZE = 100
@@ -127,8 +129,7 @@ def option_quote(ib: IB, contract: Option) -> Tuple[float, float, float]:
 
 
 def account_cash(ib: IB) -> float:
-    summary = {row.tag: row.value for row in ib.accountSummary()}
-    return float(summary.get("TotalCashValue", 0.0))
+    return usd_summary_value(ib.accountSummary(), "TotalCashValue")
 
 
 def positions_for_voo(ib: IB) -> Tuple[int, List[Any]]:

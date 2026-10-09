@@ -6,7 +6,7 @@ from typing import List
 
 from ib_async import IB, LimitOrder, Stock, StopOrder
 
-from newstrading.common import new_id, utcnow_iso
+from newstrading.common import new_id, usd_summary_value, utcnow_iso
 from newstrading.config.loader import get_symbol_entry
 from newstrading.models.execution import ExecutionReport, OrderFill, RiskCheckResult
 from newstrading.models.order_recommendation import OrderRecommendation
@@ -172,8 +172,7 @@ def execute(
         avg_price = float(trade.orderStatus.avgFillPrice) if trade.orderStatus.avgFillPrice else None
         status = _execution_status(filled_qty, order.qty, trade.orderStatus.status)
         fill = OrderFill(requested_qty=order.qty, filled_qty=filled_qty, avg_fill_price=avg_price)
-        summary = {row.tag: row.value for row in ib.accountSummary()}
-        cash_balance = float(summary.get("TotalCashValue", 0.0))
+        cash_balance = usd_summary_value(ib.accountSummary(), "TotalCashValue")
     finally:
         if ib.isConnected():
             ib.disconnect()

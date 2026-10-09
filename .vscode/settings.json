@@ -4,6 +4,7 @@
         "/^python3 -m py_compile buy_voo_limit\\.py && python3 -m compileall -q buy_voo_limit\\.py$/": {
             "approve": true,
             "matchCommandLine": true
-        }
+        },
+        "pip": true
     }
 }

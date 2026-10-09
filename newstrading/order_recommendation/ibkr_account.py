@@ -11,6 +11,7 @@ from typing import Iterator
 
 from ib_async import IB
 
+from newstrading.common import usd_summary_value
 from newstrading.models.order_recommendation import AccountSnapshot
 
 PAPER_PORT = 7497
@@ -30,10 +31,10 @@ def connect(host: str = "127.0.0.1", live: bool = False, client_id: int = 21) ->
 
 
 def get_account_snapshot(ib: IB, symbol: str) -> AccountSnapshot:
-    summary = {row.tag: row.value for row in ib.accountSummary()}
-    cash = float(summary.get("TotalCashValue", 0.0))
-    net_liq = float(summary.get("NetLiquidation", cash))
-    gross_position_value = float(summary.get("GrossPositionValue", 0.0))
+    rows = ib.accountSummary()
+    cash = usd_summary_value(rows, "TotalCashValue")
+    net_liq = usd_summary_value(rows, "NetLiquidation", cash)
+    gross_position_value = usd_summary_value(rows, "GrossPositionValue")
 
     existing_qty = 0
     positions = ib.positions()

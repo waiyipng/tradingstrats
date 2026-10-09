@@ -5,11 +5,13 @@ from typing import Optional
 
 from ib_async import IB, Contract, Future
 
+from newstrading.common import usd_summary_value
 from goldtrading.carry import days_to_expiry
 from goldtrading.config import GoldConfig
 from goldtrading.models import AccountState, FuturesQuote, MarketSnapshot, SpotQuote
 
 PAPER_PORT = 7497
+LIVE_PORT = 7496
 REQUEST_TIMEOUT_SECONDS = 8
 
 
@@ -19,9 +21,9 @@ def _normalize_expiry(value: str) -> str:
 
 
 def account_state(ib: IB) -> AccountState:
-    summary = {row.tag: row.value for row in ib.accountSummary()}
-    cash = float(summary.get("TotalCashValue", 0.0))
-    return AccountState(cash=cash, net_liquidation=float(summary.get("NetLiquidation", cash)))
+    rows = ib.accountSummary()
+    cash = usd_summary_value(rows, "TotalCashValue")
+    return AccountState(cash=cash, net_liquidation=usd_summary_value(rows, "NetLiquidation", cash))
 
 
 def spot_quote(ib: IB, config: GoldConfig) -> Optional[SpotQuote]:
@@ -91,9 +93,9 @@ def quote_for_expiry(ib: IB, config: GoldConfig, expiry: str) -> Optional[Future
     return _futures_quote_from_details(ib, details[0])
 
 
-def fetch_market_snapshot(config: GoldConfig, client_id: int = 41) -> tuple[AccountState, MarketSnapshot]:
+def fetch_market_snapshot(config: GoldConfig, client_id: int = 41, live: bool = False) -> tuple[AccountState, MarketSnapshot]:
     ib = IB()
-    ib.connect("127.0.0.1", PAPER_PORT, clientId=client_id, timeout=10)
+    ib.connect("127.0.0.1", LIVE_PORT if live else PAPER_PORT, clientId=client_id, timeout=10)
     try:
         account = account_state(ib)
         spot = spot_quote(ib, config)
