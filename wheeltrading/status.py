@@ -1,16 +1,24 @@
 """Read-only IBKR paper status used by the dashboard wheel panel."""
 from __future__ import annotations
 
+import os
 import secrets
 from typing import Any
 
 from ib_async import IB, Stock
 
+from trading_config import get_strategy_config
 from wheeltrading.config import WHEEL_CONFIGS
 from wheeltrading.ibkr_data import underlying_price
 from wheeltrading.state import active_wheel_summary, load_state, move_deep_assignment_to_pool, pool_summary
 
 PAPER_PORT = 7497
+LIVE_PORT = 7496
+LIVE_CONFIRM_ENV = "WHEELTRADING_LIVE_CONFIRM"
+
+
+def _is_live() -> bool:
+    return get_strategy_config("wheeltrading")["mode"] == "live" and os.environ.get(LIVE_CONFIRM_ENV) == "1"
 
 
 def _market_price(ib: IB, symbol: str) -> float | None:
@@ -23,8 +31,9 @@ def _market_price(ib: IB, symbol: str) -> float | None:
 
 
 def wheel_status(client_id: int | None = None) -> dict[str, Any]:
+    live = _is_live()
     ib = IB()
-    ib.connect("127.0.0.1", PAPER_PORT, clientId=client_id or 20_000 + secrets.randbelow(10_000), timeout=10)
+    ib.connect("127.0.0.1", LIVE_PORT if live else PAPER_PORT, clientId=client_id or 20_000 + secrets.randbelow(10_000), timeout=10)
     try:
         positions = ib.positions()
         state = load_state()
@@ -72,7 +81,7 @@ def wheel_status(client_id: int | None = None) -> dict[str, Any]:
                     "tracked_options": [item for item in state.get("open_wheel_options", []) if item["symbol"] == symbol],
                 }
             )
-        return {"connection_mode": "paper", "ytd_realized_pnl": float(state.get("ytd_realized_pnl", 0.0)), "symbols": rows}
+        return {"connection_mode": "live" if live else "paper", "ytd_realized_pnl": float(state.get("ytd_realized_pnl", 0.0)), "symbols": rows}
     finally:
         if ib.isConnected():
             ib.disconnect()

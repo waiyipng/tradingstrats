@@ -6,3 +6,4 @@ playwright
 APScheduler
 pytz
 yfinance
+anthropic

@@ -1,0 +1,22 @@
+{
+  "newstrading": {
+    "mode": "paper",
+    "run_interval_minutes": 30
+  },
+  "wheeltrading": {
+    "mode": "live",
+    "run_interval_minutes": 30
+  },
+  "goldtrading": {
+    "mode": "live",
+    "run_interval_minutes": 30
+  },
+  "bullcallspread": {
+    "mode": "live",
+    "run_interval_minutes": 30
+  },
+  "btctrend": {
+    "mode": "live",
+    "run_interval_minutes": 30
+  }
+}

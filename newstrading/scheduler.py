@@ -36,13 +36,16 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PYTHON = sys.executable
 LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scheduler.log")
 
+from trading_config import get_strategy_config
+
 # ---------------------------------------------------------------------------
-# CONFIG - adjust these to taste
+# CONFIG - broker mode and run cadence come from trading_config.json
 # ---------------------------------------------------------------------------
+_CFG = get_strategy_config("newstrading")
 BROKER = "ibkr"        # "paper" or "ibkr"
 EXECUTE = True          # only used when BROKER == "ibkr"; gates live order submission
-USE_LIVE_IBKR = False  # only used when BROKER == "ibkr"
-RUN_INTERVAL_MINUTES = 30
+USE_LIVE_IBKR = _CFG["mode"] == "live"  # driven by trading_config.json; must stay False unless the user explicitly requests live trading
+RUN_INTERVAL_MINUTES = _CFG["run_interval_minutes"]
 SYMBOL_STAGGER_SECONDS = 5  # avoid bursting free-tier news APIs / IBKR pacing limits
 MAX_RETRIES = 3
 RETRY_BASE_SECONDS = 10

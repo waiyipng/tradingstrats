@@ -38,3 +38,31 @@ def latest_artifact(stage: str, symbol: str) -> Path:
     if not files:
         raise FileNotFoundError(f"No artifacts found in {directory}")
     return files[-1]
+
+
+def usd_exchange_rate(rows: Any) -> float:
+    """Base-currency units per 1 USD, as reported by ib.accountSummary()'s USD
+    currency segment (1.0 if the account's base currency is already USD). Needed
+    to convert other base-currency-denominated IBKR values - e.g. OrderState.
+    initMarginChange from ib.whatIfOrder(), which carries no currency of its own -
+    into USD."""
+    usd_rate_rows = [float(row.value) for row in rows if row.tag == "ExchangeRate" and row.currency == "USD"]
+    return usd_rate_rows[0] if usd_rate_rows and usd_rate_rows[0] > 0 else 1.0
+
+
+def usd_summary_value(rows: Any, tag: str, default: float = 0.0) -> float:
+    """Converts an IBKR ib.accountSummary() tag to USD.
+
+    Account-wide tags such as NetLiquidation, ExcessLiquidity, and TotalCashValue are
+    reported by IBKR only once, in the account's base currency - there is no separate
+    USD-converted row for them, even on a non-USD-base account. A naive
+    {row.tag: row.value for row in rows} lookup silently returns that base-currency
+    figure, which is wrong by the FX rate on any account whose base currency isn't
+    USD (e.g. a ~7.8x overstatement on an HKD-base account). Convert explicitly using
+    the ExchangeRate row IBKR reports for the USD currency segment (base-currency
+    units per 1 USD; the BASE row's own rate is always 1.0).
+    """
+    base_rows = [float(row.value) for row in rows if row.tag == tag]
+    if not base_rows:
+        return default
+    return base_rows[0] / usd_exchange_rate(rows)

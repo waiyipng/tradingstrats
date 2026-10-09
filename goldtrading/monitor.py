@@ -7,7 +7,7 @@ from ib_async import IB, Contract, Future, LimitOrder
 
 from goldtrading.carry import days_to_expiry, round_to_tick, theoretical_calendar_spread, theoretical_futures_price
 from goldtrading.config import GoldConfig
-from goldtrading.ibkr_data import PAPER_PORT, quote_for_expiry, spot_quote
+from goldtrading.ibkr_data import LIVE_PORT, PAPER_PORT, quote_for_expiry, spot_quote
 from goldtrading.state import close_position, load_state
 
 
@@ -63,14 +63,40 @@ def _unwind_legs(ib: IB, config: GoldConfig, legs: list[dict[str, Any]]) -> dict
     return results
 
 
-def run_monitor_cycle(config: GoldConfig, client_id: int = 47) -> list[dict[str, Any]]:
+def execute_exit(config: GoldConfig, position_id: str, client_id: int = 47, live: bool = False) -> dict[str, Any]:
+    """Unwinds one open position by id. Used both by the paper auto-exit path and,
+    once live, by the human-approval gate (goldtrading/approval.py) after a human
+    approves a queued exit."""
+    state = load_state()
+    position = next((p for p in state.get("open_positions", []) if p["id"] == position_id and p["status"] == "open"), None)
+    if position is None:
+        return {"position_id": position_id, "action": "hold", "reason": "position no longer open"}
+
+    entry_magnitude = float(position.get("entry_mispricing_magnitude", 0.0))
+    entry_net_edge = float(position.get("entry_net_edge", 0.0))
+
+    ib = IB()
+    ib.connect("127.0.0.1", LIVE_PORT if live else PAPER_PORT, clientId=client_id, timeout=10)
+    try:
+        ib.reqMarketDataType(3)  # Delayed data when real-time subscriptions are unavailable.
+        current_magnitude, _ = _current_mispricing_magnitude(config, ib, position)
+        captured = entry_magnitude - (current_magnitude if current_magnitude is not None else entry_magnitude)
+        orders = _unwind_legs(ib, config, position["legs"])
+        close_position(position["id"], realized_edge=captured)
+        return {"position_id": position["id"], "action": "closed", "orders": orders}
+    finally:
+        if ib.isConnected():
+            ib.disconnect()
+
+
+def run_monitor_cycle(config: GoldConfig, client_id: int = 47, live: bool = False) -> list[dict[str, Any]]:
     state = load_state()
     open_positions = [position for position in state.get("open_positions", []) if position["status"] == "open"]
     if not open_positions:
         return []
 
     ib = IB()
-    ib.connect("127.0.0.1", PAPER_PORT, clientId=client_id, timeout=10)
+    ib.connect("127.0.0.1", LIVE_PORT if live else PAPER_PORT, clientId=client_id, timeout=10)
     outcomes: list[dict[str, Any]] = []
     try:
         ib.reqMarketDataType(3)  # Delayed data when real-time subscriptions are unavailable.
@@ -89,9 +115,15 @@ def run_monitor_cycle(config: GoldConfig, client_id: int = 47) -> list[dict[str,
 
             if profit_take or stop_loss or near_expiry_soon:
                 reason = "profit target reached" if profit_take else "stop-loss triggered" if stop_loss else "near-month approaching its last trading day"
-                orders = _unwind_legs(ib, config, position["legs"])
-                close_position(position["id"], realized_edge=captured)
-                outcomes.append({"position_id": position["id"], "action": "closed", "reason": reason, "orders": orders})
+                if live:
+                    from goldtrading.approval import save_pending
+
+                    save_pending("exit", {"position_id": position["id"], "reason": reason})
+                    outcomes.append({"position_id": position["id"], "action": "pending_approval", "reason": reason})
+                else:
+                    orders = _unwind_legs(ib, config, position["legs"])
+                    close_position(position["id"], realized_edge=captured)
+                    outcomes.append({"position_id": position["id"], "action": "closed", "reason": reason, "orders": orders})
             else:
                 outcomes.append({"position_id": position["id"], "action": "hold", "current_mispricing_magnitude": current_magnitude})
         return outcomes

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import secrets
 import subprocess
@@ -23,6 +24,8 @@ WHEEL_RUN_DIR = ROOT / "wheeltrading" / "data" / "automated_runs"
 WHEEL_LOG_PATH = ROOT / "wheeltrading" / "wheel_scheduler.log"
 GOLD_RUN_DIR = ROOT / "goldtrading" / "data" / "automated_runs"
 GOLD_LOG_PATH = ROOT / "goldtrading" / "gold_scheduler.log"
+BULLCALLSPREAD_REC_DIR = ROOT / "bullcallspread" / "data" / "recommendations"
+BULLCALLSPREAD_RUN_DIR = ROOT / "bullcallspread" / "data" / "automated_runs"
 EXECUTION_LOOKBACK_DAYS = 3
 
 
@@ -114,8 +117,11 @@ def parse_log_time(value: str) -> datetime:
 
 
 def scheduler_events() -> tuple[list[dict[str, str]], dict[str, Any]]:
+    from trading_config import get_strategy_config
+
+    newstrading_cfg = get_strategy_config("newstrading")
     if not LOG_PATH.exists():
-        return [], {"active": False, "interval_minutes": 30}
+        return [], {"active": False, "interval_minutes": newstrading_cfg["run_interval_minutes"], "mode": newstrading_cfg["mode"]}
     events: list[dict[str, str]] = []
     pattern = re.compile(r"^(?P<time>[^,]+),\d+ INFO .* - (?P<message>.*)$")
     lines = LOG_PATH.read_text(encoding="utf-8").splitlines()
@@ -138,7 +144,8 @@ def scheduler_events() -> tuple[list[dict[str, str]], dict[str, Any]]:
     last_end = next((finished for finished in reversed(sweep_ends) if last_start and finished >= last_start), None)
     return list(reversed(events[-12:])), {
         "active": bool(startup),
-        "interval_minutes": 30,
+        "interval_minutes": newstrading_cfg["run_interval_minutes"],
+        "mode": newstrading_cfg["mode"],
         "started_at": startup,
         "last_sweep_started_at": last_start.isoformat() if last_start else None,
         "last_sweep_completed_at": last_end.isoformat() if last_end else None,
@@ -293,12 +300,19 @@ def wheel_status_payload() -> dict[str, Any]:
             latest_runs[symbol] = run
         payload["latest_runs"] = latest_runs
         latest_run_time = max((run.get("generated_at") for run in latest_runs.values()), default=None)
+        from trading_config import get_strategy_config
         from wheeltrading.schedule import next_scan_after
 
-        upcoming = next_scan_after(datetime.now(timezone.utc))
+        wheel_cfg = get_strategy_config("wheeltrading")
+        upcoming = next_scan_after(datetime.now(timezone.utc), wheel_cfg["run_interval_minutes"])
         next_run = upcoming.isoformat() if upcoming else None
         active = subprocess.run(["pgrep", "-f", "wheeltrading.scheduler"], capture_output=True, text=True).returncode == 0
-        payload["scheduler"] = {"active": active, "interval_minutes": 30, "last_run_at": latest_run_time, "next_run": next_run}
+        payload["scheduler"] = {"active": active, "interval_minutes": wheel_cfg["run_interval_minutes"], "last_run_at": latest_run_time, "next_run": next_run}
+
+        from wheeltrading.approval import is_expired as wheel_is_expired, load_pending as wheel_load_pending
+
+        pending_all = wheel_load_pending()
+        payload["pending_approvals"] = {symbol: entry for symbol, entry in pending_all.items() if not wheel_is_expired(entry)}
         return payload
     except Exception as exc:
         return {"connection_mode": "unavailable", "status": "unavailable", "reason": str(exc), "ytd_realized_pnl": 0.0, "symbols": []}
@@ -312,14 +326,111 @@ def gold_status_payload() -> dict[str, Any]:
         latest_run = newest_json(GOLD_RUN_DIR) if GOLD_RUN_DIR.exists() else None
         payload["latest_run"] = latest_run
         latest_run_time = latest_run.get("generated_at") if latest_run else None
+        from trading_config import get_strategy_config
+
+        gold_cfg = get_strategy_config("goldtrading")
         next_run = None
         if latest_run_time:
-            next_run = (datetime.fromisoformat(latest_run_time.replace("Z", "+00:00")) + timedelta(minutes=30)).isoformat()
+            next_run = (datetime.fromisoformat(latest_run_time.replace("Z", "+00:00")) + timedelta(minutes=gold_cfg["run_interval_minutes"])).isoformat()
         active = subprocess.run(["pgrep", "-f", "goldtrading.scheduler"], capture_output=True, text=True).returncode == 0
-        payload["scheduler"] = {"active": active, "interval_minutes": 30, "last_run_at": latest_run_time, "next_run": next_run}
+        payload["scheduler"] = {"active": active, "interval_minutes": gold_cfg["run_interval_minutes"], "last_run_at": latest_run_time, "next_run": next_run}
+        payload["connection_mode"] = _connection_mode("goldtrading", "GOLDTRADING_LIVE_CONFIRM")
+
+        from goldtrading.approval import is_expired as gold_is_expired, load_pending as gold_load_pending
+
+        gold_pending = gold_load_pending()
+        if gold_pending is not None and gold_is_expired(gold_pending):
+            gold_pending = None
+        payload["pending_approval"] = gold_pending
         return payload
     except Exception as exc:
         return {"connection_mode": "unavailable", "status": "unavailable", "reason": str(exc), "realized_pnl": 0.0, "ytd_realized_pnl": 0.0, "open_positions": []}
+
+
+def bullcallspread_status_payload() -> dict[str, Any]:
+    try:
+        from bullcallspread.status import bullcallspread_status
+
+        payload = bullcallspread_status()
+        latest_run_time = (payload.get("latest_recommendation") or {}).get("generated_at")
+        payload["latest_run_at"] = latest_run_time
+        from trading_config import get_strategy_config
+        from bullcallspread.schedule import next_scan_after
+
+        bcs_cfg = get_strategy_config("bullcallspread")
+        upcoming = next_scan_after(datetime.now(timezone.utc), bcs_cfg["run_interval_minutes"])
+        next_run = upcoming.isoformat() if upcoming else None
+        active = subprocess.run(["pgrep", "-f", "bullcallspread.scheduler"], capture_output=True, text=True).returncode == 0
+        payload["scheduler"] = {"active": active, "interval_minutes": bcs_cfg["run_interval_minutes"], "last_run_at": latest_run_time, "next_run": next_run}
+        payload["connection_mode"] = _connection_mode("bullcallspread", "BULLCALLSPREAD_LIVE_CONFIRM")
+        return payload
+    except Exception as exc:
+        return {"status": "unavailable", "reason": str(exc), "latest_recommendation": None, "latest_execution": None, "open_positions": []}
+
+
+def _connection_mode(strategy: str, env_var: str) -> str:
+    """Live requires BOTH trading_config.json mode="live" AND the strategy's own
+    confirm env var on this process, mirroring each scheduler's own gate."""
+    from trading_config import get_strategy_config
+
+    cfg = get_strategy_config(strategy)
+    return "live" if cfg["mode"] == "live" and os.environ.get(env_var) == "1" else "paper"
+
+
+def btctrend_bars_payload() -> dict[str, Any]:
+    """Recent daily bars with the same SMA/Donchian/ATR indicators the signal votes
+    on, for the dashboard's price chart. Read-only: refetches public daily bars,
+    never touches IBKR."""
+    try:
+        from btctrend.config import BTC_CONFIG
+        from btctrend.history import fetch_daily_bars
+
+        bars = fetch_daily_bars(BTC_CONFIG.history_symbol, lookback_days=BTC_CONFIG.history_days)
+        bars = bars.reset_index()
+        bars.columns = ["date", "open", "high", "low", "close"]
+        bars["date"] = bars["date"].dt.strftime("%Y-%m-%d")
+
+        for window in (20, 50, 100, 150, 200):
+            bars[f"sma{window}"] = bars["close"].rolling(window).mean()
+        bars["donchian55_upper"] = bars["close"].rolling(55).max()
+        bars["donchian20_lower"] = bars["close"].rolling(20).min()
+
+        prior_close = bars["close"].shift()
+        true_range = (bars["high"] - bars["low"]).combine((bars["high"] - prior_close).abs(), max).combine((bars["low"] - prior_close).abs(), max)
+        bars["atr14"] = true_range.rolling(14).mean()
+
+        recent = bars.tail(200)
+        recent = recent.where(recent.notna(), None)
+        return {"bars": recent.to_dict(orient="records")}
+    except Exception as exc:
+        return {"bars": [], "status": "unavailable", "reason": str(exc)}
+
+
+def btctrend_status_payload() -> dict[str, Any]:
+    try:
+        from btctrend.config import RUN_INTERVAL_MINUTES
+        from btctrend.status import btctrend_status
+
+        payload = btctrend_status()
+        latest_run_time = (payload.get("latest_run") or {}).get("generated_at")
+        next_run = None
+        if latest_run_time:
+            next_run = (datetime.fromisoformat(latest_run_time.replace("Z", "+00:00")) + timedelta(minutes=RUN_INTERVAL_MINUTES)).isoformat()
+        active = subprocess.run(["pgrep", "-f", r"python.* -m btctrend\.scheduler"], capture_output=True, text=True).returncode == 0
+        # A run older than three intervals while the scheduler claims to be active means cycles are failing or hung.
+        stale = bool(latest_run_time) and (datetime.now(timezone.utc) - datetime.fromisoformat(latest_run_time.replace("Z", "+00:00"))).total_seconds() > 3 * RUN_INTERVAL_MINUTES * 60
+        payload["scheduler"] = {"active": active, "interval_minutes": RUN_INTERVAL_MINUTES, "last_run_at": latest_run_time, "next_run": next_run, "stale": active and stale}
+        payload["connection_mode"] = _connection_mode("btctrend", "BTCTREND_LIVE_CONFIRM")
+
+        from btctrend.approval import is_expired, load_pending
+
+        pending = load_pending()
+        if pending is not None and is_expired(pending):
+            pending = None  # surfaced as expired; the next scheduler cycle clears the file
+        payload["pending_approval"] = pending
+        return payload
+    except Exception as exc:
+        return {"status": "unavailable", "reason": str(exc), "latest_run": None, "position": None, "recent_fills": [], "ytd_realized_pnl": 0.0, "backtest": None}
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
@@ -339,6 +450,57 @@ class DashboardHandler(BaseHTTPRequestHandler):
             payload_data = wheel_status_payload()
         elif path == "/api/gold-status":
             payload_data = gold_status_payload()
+        elif path == "/api/bullcallspread-status":
+            payload_data = bullcallspread_status_payload()
+        elif path == "/api/btctrend-status":
+            payload_data = btctrend_status_payload()
+        elif path == "/api/btctrend-bars":
+            payload_data = btctrend_bars_payload()
+        else:
+            self.send_error(404)
+            return
+        payload = json.dumps(payload_data).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def do_POST(self) -> None:
+        path = urlparse(self.path).path
+        if path == "/api/btctrend-approve":
+            from btctrend.approval import approve_pending
+            from btctrend.config import BTC_CONFIG
+            from trading_config import get_strategy_config as _cfg
+
+            btc_live = _cfg("btctrend")["mode"] == "live" and os.environ.get("BTCTREND_LIVE_CONFIRM") == "1"
+            payload_data: Any = approve_pending(BTC_CONFIG, client_id=51, live=btc_live)
+        elif path == "/api/btctrend-reject":
+            from btctrend.approval import reject_pending
+
+            payload_data = reject_pending()
+        elif path.startswith("/api/wheel-approve/"):
+            from trading_config import get_strategy_config as _cfg
+            from wheeltrading.approval import approve_pending as wheel_approve
+
+            symbol = path.removeprefix("/api/wheel-approve/")
+            wheel_live = _cfg("wheeltrading")["mode"] == "live" and os.environ.get("WHEELTRADING_LIVE_CONFIRM") == "1"
+            payload_data = wheel_approve(symbol, client_id=52, live=wheel_live)
+        elif path.startswith("/api/wheel-reject/"):
+            from wheeltrading.approval import reject_pending as wheel_reject
+
+            payload_data = wheel_reject(path.removeprefix("/api/wheel-reject/"))
+        elif path == "/api/goldtrading-approve":
+            from goldtrading.approval import approve_pending as gold_approve
+            from trading_config import get_strategy_config as _cfg
+
+            gold_live = _cfg("goldtrading")["mode"] == "live" and os.environ.get("GOLDTRADING_LIVE_CONFIRM") == "1"
+            payload_data = gold_approve(client_id=53, live=gold_live)
+        elif path == "/api/goldtrading-reject":
+            from goldtrading.approval import reject_pending as gold_reject
+
+            payload_data = gold_reject()
         else:
             self.send_error(404)
             return

@@ -24,6 +24,11 @@ venv/
 newstrading/data/
 wheeltrading/data/
 goldtrading/data/
+bullcallspread/data/
+btctrend/data/
+
+# Proprietary earnings forecast input - never commit; copy from the .example.json template
+bullcallspread/my_earnings_view.json
 
 # Packages
 *.egg-info/
