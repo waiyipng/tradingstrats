@@ -121,6 +121,8 @@ The wheel scheduler scans every 30 minutes during regular US trading hours only 
 
 The gold scheduler runs every 30 minutes; `goldtrading/run_gold.py` is a manual, read-only CLI that never submits orders and honors the same broker-mode gate as the scheduler (see [Broker mode](#broker-mode)). In paper mode new entries submit directly; in live mode a non-`HOLD` cash-and-carry or calendar-spread entry is instead queued as a pending approval (`goldtrading/approval.py`, `goldtrading/data/pending_approval.json`) that a human must approve or reject from the dashboard (`POST /api/goldtrading-approve` / `-reject`) before anything reaches IBKR; while an entry is pending, new entries are skipped. Do not change this live-mode approval gate without explicit approval. Gold status is read-only in the dashboard. See `goldtrading/STRATEGY.md` for the full strategy contract, worked examples, and risk-gate ordering.
 
+Separately, when a session has an IBKR Connector (MCP) available, the same strategy logic can be run against it in an agent-driven way — never by the unattended scheduler, since those MCP tools aren't callable from a plain Python process. Cash-and-carry stays evaluate/report-only there (the connector can't order-instruct the spot CMDTY leg); the calendar spread can execute as two independent, human-approved single-leg instructions. See `goldtrading/connector_adapter.py` and `goldtrading/CONNECTOR_RUNBOOK.md` for the conversion helpers and exact procedure, and `goldtrading/STRATEGY.md`'s "Running via the IBKR Connector" section for the full capability gaps.
+
 ## Bull call spread (MS)
 
 `bullcallspread/` is independent from `newstrading/`, `wheeltrading/`, and `goldtrading/`, and is built as two Claude-API-backed agents:
