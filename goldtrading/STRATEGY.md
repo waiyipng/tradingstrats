@@ -127,6 +127,60 @@ the cash-and-carry trade, then the calendar spread. `goldtrading/run_gold.py`
 is a manual, read-only CLI that only produces a recommendation JSON and
 never submits an order.
 
+## Running via the IBKR Connector (agent-driven)
+
+Separately from the TWS/`ib_async` connection above, this strategy can also be
+evaluated — and, for the calendar spread only, executed — through IBKR's own
+Connector (an MCP server exposing tools like `search_futures`,
+`get_price_snapshot`, and `create_order_instruction` to an AI agent). This is
+**not** a second runtime mode the scheduler can switch into: those tools are
+only callable by an MCP-connected agent during a live conversation, never by
+an unattended Python process. `goldtrading/scheduler.py` and `run_gold.py`
+always use TWS (paper or live port, per [Broker mode](#broker-mode) semantics
+in `CLAUDE.md`) regardless of whether a connector is also available in the
+session. The connector path is agent-driven only — see
+`goldtrading/CONNECTOR_RUNBOOK.md` for the exact procedure.
+
+The connector has real capability gaps relative to TWS, confirmed live:
+
+- **No spot CMDTY order instructions.** `create_order_instruction` supports
+  STK, FUT, single-leg OPT/FOP, and OPT–OPT combos — not CMDTY. Spot gold
+  (`XAUUSD`) can be quoted via the connector but never order-instructed, so
+  **cash-and-carry is evaluate/report-only under the connector path**; its
+  execution stays TWS-only (paper or live).
+- **No FUT–FUT combo instructions.** `get_combo_identifier` and
+  `create_order_instruction` both restrict combos to OPT–OPT legs. The
+  calendar spread (both legs FUT) can still execute via the connector, but
+  only as **two independent single-leg instructions**, not an atomic combo —
+  carrying the same leg-unwind risk already described above for TWS's own
+  combo-rejection fallback.
+- **`REVIEW_AND_APPROVE` is the real safety gate.** `create_order_instruction`
+  never places a live order; it stages an instruction behind a deep-link URL
+  the user must personally open and submit in the IBKR app/site. If a
+  session's `get_flow_type` ever reports `AUTONOMOUS` instead, no instruction
+  can be created for `FUT` at all (evaluation can still proceed).
+- **Symbol collisions.** `search_contracts("MGC")` returns multiple unrelated
+  instruments sharing that symbol (the COMEX E-Micro Gold future, and an
+  unrelated Vanguard ETF on ARCA) — selection must filter on exchange and
+  section, not symbol alone (`connector_adapter.select_mgc_future_contract`
+  does this and raises rather than guessing if the match is ambiguous).
+- **Account currency.** The connected account's base currency may not be USD;
+  the connector exposes no FX rate directly, so
+  `connector_adapter.account_state_from_connector` prefers a USD row from
+  `get_account_balances` and otherwise falls back to unconverted base-currency
+  figures — a caveat to surface to the user, not something to present as a
+  clean USD number.
+- **No margin-preview tool.** TWS's `whatIfOrder` has no connector equivalent,
+  so the pre-instruction margin/cash check on this path is a cruder,
+  documented-as-weaker approximation (comparing the estimated notional
+  against `excess_liquidity`/`buying_power`), never presented as equivalent
+  to the TWS gate.
+
+A position opened through the connector is recorded into the same
+`gold_state.json` via `goldtrading.state.record_open_position` (see the
+runbook's last step) so the regular TWS-based monitor still manages its
+exits — the two paths share state even though only one of them touches TWS.
+
 ## Limitations
 
 - Static financing/storage-rate assumptions (see above) need periodic
